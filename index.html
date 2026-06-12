@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoidCode Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0f0f10; overflow: hidden; }
+    #frame { width: 100%; height: 100%; border: none; display: none; }
+    #loading {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      color: #888; font-family: monospace; font-size: 13px;
+    }
+    .spinner {
+      width: 28px; height: 28px; border: 2px solid #333;
+      border-top-color: #a78bfa; border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div class="spinner"></div>
+    <span>Waiting for VoidCode…</span>
+  </div>
+  <iframe id="frame" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-same-origin allow-downloads"></iframe>
+
+  <script>
+    const frame = document.getElementById('frame');
+    const loading = document.getElementById('loading');
+
+    function render(html) {
+      frame.style.display = 'block';
+      loading.style.display = 'none';
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
+    }
+
+    // Signal ready to opener (fresh tab load)
+    if (window.opener) {
+      window.opener.postMessage({ type: 'VOIDCODE_READY' }, '*');
+    }
+
+    // Persistent listener — handles both first load and re-runs into existing tab
+    window.addEventListener('message', (e) => {
+      if (!e.origin.startsWith('chrome-extension://') && e.origin !== 'null') return;
+      if (e.data?.type === 'VOIDCODE_RUN' && e.data.html) {
+        render(e.data.html);
+      }
+      // Re-signal ready if extension pings us
+      if (e.data?.type === 'VOIDCODE_PING') {
+        e.source?.postMessage({ type: 'VOIDCODE_READY' }, '*');
+      }
+    });
+  </script>
+</body>
+</html>
