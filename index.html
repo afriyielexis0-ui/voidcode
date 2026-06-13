@@ -2,133 +2,43 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VoidCode Runner</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; background: #0f0f10; overflow: hidden; font-family: monospace; }
-    #frame { width: 100%; height: 100%; border: none; display: none; }
-    #loading {
-      position: fixed; inset: 0; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; gap: 16px;
-    }
-    .spinner {
-      width: 28px; height: 28px; border: 2px solid #333;
-      border-top-color: #a78bfa; border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    #status { color: #888; font-size: 13px; }
-    #log {
-      position: fixed; bottom: 0; left: 0; right: 0;
-      max-height: 180px; overflow-y: auto;
-      background: #111; border-top: 1px solid #222;
-      padding: 8px 12px; font-size: 11px; color: #555;
-      display: none;
-    }
-    #log.visible { display: block; }
-    #log .line { margin: 1px 0; white-space: pre-wrap; word-break: break-all; }
-    #log .line.err { color: #f87171; }
-    #log .line.info { color: #a78bfa; }
+    body { background: #0f0f10; color: #aaa; font-family: monospace; padding: 20px; font-size: 12px; }
+    .line { margin: 4px 0; }
+    .ok { color: #4ade80; }
+    .err { color: #f87171; }
+    .info { color: #a78bfa; }
   </style>
 </head>
 <body>
-  <div id="loading">
-    <div class="spinner"></div>
-    <span id="status">Waiting for VoidCode…</span>
-  </div>
-  <iframe id="frame" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-same-origin allow-downloads" allow="cross-origin-isolated"></iframe>
   <div id="log"></div>
-
   <script>
-    const frame   = document.getElementById('frame');
-    const loading = document.getElementById('loading');
-    const statusEl = document.getElementById('status');
-    const logEl   = document.getElementById('log');
-
-    const WC_CLIENT_ID = 'wc_api_afriyielexis0_c8a73f77c850f56d2211aaf2f209f66f';
-
-    function setStatus(msg) { statusEl.textContent = msg; }
-
-    function addLog(text, type = '') {
-      logEl.classList.add('visible');
-      text.split('\n').forEach(line => {
-        if (!line.trim()) return;
-        const div = document.createElement('div');
-        div.className = 'line' + (type ? ' ' + type : '');
-        div.textContent = line;
-        logEl.appendChild(div);
-        logEl.scrollTop = logEl.scrollHeight;
-      });
+    function log(msg, cls) {
+      const d = document.createElement('div');
+      d.className = 'line ' + (cls||'');
+      d.textContent = new Date().toISOString().slice(11,23) + ' ' + msg;
+      document.getElementById('log').appendChild(d);
     }
 
-    function renderHTML(html) {
-      frame.removeAttribute('src');
-      frame.style.display = 'block';
-      loading.style.display = 'none';
-      const doc = frame.contentDocument || frame.contentWindow.document;
-      doc.open(); doc.write(html); doc.close();
-    }
+    log('Page loaded', 'ok');
+    log('window.opener = ' + window.opener, 'info');
 
-    async function runFrameworkProject(files) {
-      setStatus('Loading WebContainer runtime…');
-      try {
-        const { WebContainer } = await import('https://esm.sh/@webcontainer/api');
-
-        setStatus('Booting runtime…');
-        const wc = await WebContainer.boot({
-          workdirName: 'voidcode',
-          coep: 'require-corp',
-        });
-
-        setStatus('Writing files…');
-        await wc.mount(files);
-
-        setStatus('Installing dependencies…');
-        addLog('npm install', 'info');
-        const install = await wc.spawn('npm', ['install']);
-        install.output.pipeTo(new WritableStream({ write(d) { addLog(d); } }));
-        const installExit = await install.exit;
-        if (installExit !== 0) {
-          addLog('npm install failed — check log above', 'err');
-          setStatus('Install failed');
-          return;
-        }
-
-        setStatus('Starting dev server…');
-        addLog('npm run dev', 'info');
-        const dev = await wc.spawn('npm', ['run', 'dev']);
-        dev.output.pipeTo(new WritableStream({ write(d) { addLog(d); } }));
-
-        wc.on('server-ready', (port, url) => {
-          addLog(`Ready on ${url}`, 'info');
-          setStatus('Running');
-          frame.src = url;
-          frame.style.display = 'block';
-          loading.style.display = 'none';
-        });
-
-      } catch (err) {
-        addLog(String(err), 'err');
-        setStatus('Error — see log');
-        console.error(err);
-      }
+    if (window.opener) {
+      log('Sending VOIDCODE_READY to opener...', 'info');
+      window.opener.postMessage({ type: 'VOIDCODE_READY' }, '*');
+      log('Sent!', 'ok');
+    } else {
+      log('NO OPENER — opened directly, not via extension', 'err');
     }
 
     window.addEventListener('message', (e) => {
-      if (!e.origin.startsWith('chrome-extension://') && e.origin !== 'null') return;
-      if (e.data?.type !== 'VOIDCODE_RUN') return;
-
-      if (e.data.html) {
-        renderHTML(e.data.html);
-      } else if (e.data.files) {
-        runFrameworkProject(e.data.files);
-      }
+      log('Message received from: ' + e.origin, 'ok');
+      log('Data: ' + JSON.stringify(e.data).slice(0, 200), 'ok');
     });
 
-    if (window.opener) {
-      window.opener.postMessage({ type: 'VOIDCODE_READY' }, '*');
-    }
+    log('Listening for messages...', 'info');
   </script>
 </body>
 </html>
