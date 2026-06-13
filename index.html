@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoidCode Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0f0f10; overflow: hidden; font-family: monospace; }
+
+    #frame { width: 100%; height: 100%; border: none; display: none; }
+
+    #status-screen {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      color: #888; font-size: 13px;
+    }
+    .spinner {
+      width: 28px; height: 28px; border: 2px solid #333;
+      border-top-color: #a78bfa; border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #status-text { color: #aaa; }
+    #log-box {
+      width: 480px; max-height: 200px; overflow-y: auto;
+      background: #111; border: 1px solid #2a2a3a;
+      border-radius: 6px; padding: 10px 12px;
+      font-size: 12px; color: #666; line-height: 1.7;
+      display: none;
+    }
+    #log-box.visible { display: block; }
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-line.err { color: #f87171; }
+    .log-line.ok  { color: #4ade80; }
+    .log-line.info { color: #888; }
+
+    #error-screen {
+      position: fixed; inset: 0; display: none; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      color: #f87171; font-size: 13px; padding: 24px; text-align: center;
+    }
+    #error-screen.visible { display: flex; }
+    #error-msg { color: #fca5a5; max-width: 480px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="status-screen">
+    <div class="spinner"></div>
+    <div id="status-text">Waiting for VoidCode…</div>
+    <div id="log-box"></div>
+  </div>
+
+  <div id="error-screen">
+    <div>⚠️ Runner Error</div>
+    <div id="error-msg"></div>
+  </div>
+
+  <iframe id="frame" allow="cross-origin-isolated"></iframe>
+
+  <script type="module">
+    // ── Simple HTML runner (no WebContainer) ──────────────────────────────────
+    const frame = document.getElementById('frame');
+    const statusScreen = document.getElementById('status-screen');
+    const statusText = document.getElementById('status-text');
+    const logBox = document.getElementById('log-box');
+    const errorScreen = document.getElementById('error-screen');
+    const errorMsg = document.getElementById('error-msg');
+
+    function setStatus(msg) { statusText.textContent = msg; }
+
+    function log(line, type = 'info') {
+      logBox.classList.add('visible');
+      const d = document.createElement('div');
+      d.className = `log-line ${type}`;
+      d.textContent = line;
+      logBox.appendChild(d);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function showError(msg) {
+      statusScreen.style.display = 'none';
+      errorScreen.classList.add('visible');
+      errorMsg.textContent = msg;
+    }
+
+    function renderSimple(html) {
+      statusScreen.style.display = 'none';
+      frame.style.display = 'block';
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      doc.open(); doc.write(html); doc.close();
+    }
+
+    // ── WebContainer runner ───────────────────────────────────────────────────
+    let wcBooted = false;
+    let wc = null;
+
+    async function runWebContainer(files) {
+      setStatus('Booting WebContainer…');
+      log('Importing WebContainer API…');
+
+      let WebContainer, auth;
+      try {
+        const mod = await import('https://unpkg.com/@webcontainer/api@1/dist/index.js');
+        WebContainer = mod.WebContainer;
+        auth = mod.auth;
+      } catch(e) {
+        showError('Failed to load WebContainer API: ' + e.message);
+        return;
+      }
+
+      try {
+        log('Authenticating…');
+        auth.init({
+          clientId: 'wc_api_afriyielexis0_c8a73f77c850f56d2211aaf2f209f66f',
+          scope: '',
+        });
+      } catch(e) {
+        // auth may already be initialised on re-use
+      }
+
+      try {
+        if (!wcBooted) {
+          log('Booting container…');
+          wc = await WebContainer.boot();
+          wcBooted = true;
+          log('Container booted ✓', 'ok');
+        } else {
+          log('Reusing container…', 'info');
+        }
+      } catch(e) {
+        showError('WebContainer boot failed: ' + e.message + '\n\nMake sure your browser supports SharedArrayBuffer (Chrome with HTTPS).');
+        return;
+      }
+
+      // Mount files
+      setStatus('Mounting files…');
+      log(`Mounting ${Object.keys(files).length} files…`);
+      try {
+        // Convert flat {path: content} map to WebContainer's nested FileSystemTree
+        const tree = pathsToTree(files);
+        await wc.mount(tree);
+        log('Files mounted ✓', 'ok');
+      } catch(e) {
+        showError('Failed to mount files: ' + e.message);
+        return;
+      }
+
+      // npm install
+      setStatus('Installing dependencies…');
+      log('Running npm install…');
+      try {
+        const install = await wc.spawn('npm', ['install']);
+        install.output.pipeTo(new WritableStream({
+          write(chunk) { log(chunk.trimEnd()); }
+        }));
+        const code = await install.exit;
+        if (code !== 0) { showError('npm install failed (exit ' + code + ')'); return; }
+        log('npm install done ✓', 'ok');
+      } catch(e) {
+        showError('npm install error: ' + e.message);
+        return;
+      }
+
+      // npm run dev
+      setStatus('Starting dev server…');
+      log('Running npm run dev…');
+      try {
+        const dev = await wc.spawn('npm', ['run', 'dev']);
+        dev.output.pipeTo(new WritableStream({
+          write(chunk) { log(chunk.trimEnd()); }
+        }));
+
+        wc.on('server-ready', (port, url) => {
+          log(`Server ready on port ${port} → ${url}`, 'ok');
+          setStatus('');
+          statusScreen.style.display = 'none';
+          frame.style.display = 'block';
+          frame.src = url;
+        });
+      } catch(e) {
+        showError('Dev server error: ' + e.message);
+      }
+    }
+
+    // Convert flat { "src/App.tsx": "...", "package.json": "..." } to WebContainer FileSystemTree
+    function pathsToTree(flat) {
+      const tree = {};
+      for (const [filePath, contents] of Object.entries(flat)) {
+        const parts = filePath.split('/');
+        let node = tree;
+        for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          if (!node[part]) node[part] = { directory: {} };
+          node = node[part].directory;
+        }
+        const filename = parts[parts.length - 1];
+        node[filename] = { file: { contents } };
+      }
+      return tree;
+    }
+
+    // ── Signal ready to opener ────────────────────────────────────────────────
+    if (window.opener) {
+      window.opener.postMessage({ type: 'VOIDCODE_READY' }, '*');
+    }
+
+    // ── Listen for messages from extension ────────────────────────────────────
+    window.addEventListener('message', (e) => {
+      // Accept from extension or same origin
+      if (!e.origin.startsWith('chrome-extension://') && e.origin !== 'null' && e.origin !== location.origin) return;
+
+      if (e.data?.type === 'VOIDCODE_RUN' && e.data.html) {
+        // Simple HTML project — render directly
+        renderSimple(e.data.html);
+      }
+
+      if (e.data?.type === 'VOIDCODE_RUN_WC' && e.data.files) {
+        // Node/Vite project — boot WebContainer
+        runWebContainer(e.data.files);
+      }
+    });
+  </script>
+</body>
+</html>
