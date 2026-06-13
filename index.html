@@ -7,9 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #0f0f10; overflow: hidden; font-family: monospace; }
-
     #frame { width: 100%; height: 100%; border: none; display: none; }
-
     #loading {
       position: fixed; inset: 0; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 16px;
@@ -39,22 +37,16 @@
     <div class="spinner"></div>
     <span id="status">Waiting for VoidCode…</span>
   </div>
-  <iframe id="frame" allow="cross-origin-isolated"></iframe>
+  <iframe id="frame" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-same-origin allow-downloads" allow="cross-origin-isolated"></iframe>
   <div id="log"></div>
 
-  <script type="module">
-    import { WebContainer } from 'https://esm.sh/@webcontainer/api@1';
-    import { auth } from 'https://esm.sh/@webcontainer/api@1/auth';
-
-    const frame  = document.getElementById('frame');
+  <script>
+    const frame   = document.getElementById('frame');
     const loading = document.getElementById('loading');
     const statusEl = document.getElementById('status');
-    const logEl = document.getElementById('log');
+    const logEl   = document.getElementById('log');
 
     const WC_CLIENT_ID = 'wc_api_afriyielexis0_c8a73f77c850f56d2211aaf2f209f66f';
-
-    let wcInstance = null;
-    let wcBooting = false;
 
     function setStatus(msg) { statusEl.textContent = msg; }
 
@@ -70,7 +62,6 @@
       });
     }
 
-    // ── Plain HTML mode ──────────────────────────────────────────────────────
     function renderHTML(html) {
       frame.removeAttribute('src');
       frame.style.display = 'block';
@@ -79,27 +70,16 @@
       doc.open(); doc.write(html); doc.close();
     }
 
-    // ── WebContainer mode ────────────────────────────────────────────────────
-    async function bootWebContainer() {
-      if (wcInstance) return wcInstance;
-      if (wcBooting) {
-        // Wait until boot completes
-        await new Promise(r => { const t = setInterval(() => { if (wcInstance) { clearInterval(t); r(); } }, 100); });
-        return wcInstance;
-      }
-      wcBooting = true;
-      setStatus('Authorising WebContainer…');
-
-      await auth.init({ clientId: WC_CLIENT_ID, scope: '' });
-
-      setStatus('Booting runtime…');
-      wcInstance = await WebContainer.boot();
-      return wcInstance;
-    }
-
     async function runFrameworkProject(files) {
+      setStatus('Loading WebContainer runtime…');
       try {
-        const wc = await bootWebContainer();
+        const { WebContainer } = await import('https://esm.sh/@webcontainer/api');
+
+        setStatus('Booting runtime…');
+        const wc = await WebContainer.boot({
+          workdirName: 'voidcode',
+          coep: 'require-corp',
+        });
 
         setStatus('Writing files…');
         await wc.mount(files);
@@ -109,7 +89,11 @@
         const install = await wc.spawn('npm', ['install']);
         install.output.pipeTo(new WritableStream({ write(d) { addLog(d); } }));
         const installExit = await install.exit;
-        if (installExit !== 0) { addLog('npm install failed', 'err'); setStatus('Install failed'); return; }
+        if (installExit !== 0) {
+          addLog('npm install failed — check log above', 'err');
+          setStatus('Install failed');
+          return;
+        }
 
         setStatus('Starting dev server…');
         addLog('npm run dev', 'info');
@@ -117,35 +101,31 @@
         dev.output.pipeTo(new WritableStream({ write(d) { addLog(d); } }));
 
         wc.on('server-ready', (port, url) => {
-          addLog(`Server ready on ${url}`, 'info');
+          addLog(`Ready on ${url}`, 'info');
           setStatus('Running');
           frame.src = url;
           frame.style.display = 'block';
           loading.style.display = 'none';
         });
+
       } catch (err) {
         addLog(String(err), 'err');
-        setStatus('Error — check log');
+        setStatus('Error — see log');
         console.error(err);
       }
     }
 
-    // ── Message handler ──────────────────────────────────────────────────────
-    window.addEventListener('message', async (e) => {
+    window.addEventListener('message', (e) => {
       if (!e.origin.startsWith('chrome-extension://') && e.origin !== 'null') return;
+      if (e.data?.type !== 'VOIDCODE_RUN') return;
 
-      if (e.data?.type === 'VOIDCODE_RUN') {
-        if (e.data.html) {
-          // Plain HTML/CSS/JS project
-          renderHTML(e.data.html);
-        } else if (e.data.files) {
-          // Framework project — run in WebContainer
-          await runFrameworkProject(e.data.files);
-        }
+      if (e.data.html) {
+        renderHTML(e.data.html);
+      } else if (e.data.files) {
+        runFrameworkProject(e.data.files);
       }
     });
 
-    // Signal opener we're ready
     if (window.opener) {
       window.opener.postMessage({ type: 'VOIDCODE_READY' }, '*');
     }
