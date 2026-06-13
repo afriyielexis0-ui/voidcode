@@ -5,40 +5,70 @@
   <title>VoidCode Runner</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0f0f10; color: #aaa; font-family: monospace; padding: 20px; font-size: 12px; }
-    .line { margin: 4px 0; }
-    .ok { color: #4ade80; }
-    .err { color: #f87171; }
-    .info { color: #a78bfa; }
+    body { background: #000; width: 100vw; height: 100vh; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
   </style>
 </head>
 <body>
-  <div id="log"></div>
+  <iframe id="output" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-same-origin"></iframe>
   <script>
-    function log(msg, cls) {
-      const d = document.createElement('div');
-      d.className = 'line ' + (cls||'');
-      d.textContent = new Date().toISOString().slice(11,23) + ' ' + msg;
-      document.getElementById('log').appendChild(d);
+    const EXTENSION_ORIGINS = [
+      // Chrome/Firefox extension origins are like chrome-extension://... or moz-extension://...
+      // We can't know the exact ID, so accept any extension origin + the panel itself
+    ];
+
+    function render(html) {
+      const iframe = document.getElementById('output');
+      const doc = iframe.contentDocument || iframe.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
     }
 
-    log('Page loaded', 'ok');
-    log('window.opener = ' + window.opener, 'info');
-
-    if (window.opener) {
-      log('Sending VOIDCODE_READY to opener...', 'info');
-      window.opener.postMessage({ type: 'VOIDCODE_READY' }, '*');
-      log('Sent!', 'ok');
-    } else {
-      log('NO OPENER — opened directly, not via extension', 'err');
+    function renderFiles(files) {
+      // For framework projects sent as file trees — build a simple index loader
+      // For now, find index.html and render it
+      const entry = files['index.html'] || files[Object.keys(files).find(k => k.endsWith('index.html'))];
+      if (entry) {
+        render(typeof entry === 'string' ? entry : entry.content || '');
+      }
     }
 
+    // Listen for messages from the extension panel
     window.addEventListener('message', (e) => {
-      log('Message received from: ' + e.origin, 'ok');
-      log('Data: ' + JSON.stringify(e.data).slice(0, 200), 'ok');
+      const msg = e.data;
+      if (!msg || !msg.type) return;
+
+      if (msg.type === 'VOIDCODE_RUN') {
+        if (msg.html) {
+          render(msg.html);
+        } else if (msg.files) {
+          renderFiles(msg.files);
+        }
+      }
     });
 
-    log('Listening for messages...', 'info');
+    // Signal to the extension panel that we're ready
+    // Use opener if available (tab opened via window.open)
+    // Also send via broadcast so any listening panel gets it
+    function signalReady() {
+      const msg = { type: 'VOIDCODE_READY' };
+
+      // Primary: opener reference (when extension opened this tab)
+      if (window.opener) {
+        try { window.opener.postMessage(msg, '*'); } catch(_) {}
+      }
+
+      // Also try posting to all frames — extension panel may be in a different context
+      // The extension listens on its own window, so opener is the right path.
+      // If opener is null (tab was pre-opened), we can't push — but the extension
+      // will detect alreadyLoaded and send directly without waiting for READY.
+    }
+
+    // Signal immediately + after a short delay as backup
+    signalReady();
+    setTimeout(signalReady, 500);
+    setTimeout(signalReady, 1500);
   </script>
 </body>
 </html>
