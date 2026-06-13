@@ -12,9 +12,10 @@
       background: #111; color: #0f0; font-size: 13px;
       padding: 6px 12px; z-index: 999;
       display: none;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     #status.visible { display: block; }
-    #status.error { color: #f55; }
+    #status.error { color: #f55; background: #1a0000; }
   </style>
 </head>
 <body>
@@ -22,15 +23,16 @@
   <iframe id="output" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-same-origin"></iframe>
 
   <script type="module">
-    const status = document.getElementById('status');
+    const statusEl = document.getElementById('status');
     const iframe = document.getElementById('output');
 
     function showStatus(msg, isError = false) {
-      status.textContent = msg;
-      status.className = 'visible' + (isError ? ' error' : '');
+      statusEl.textContent = msg;
+      statusEl.className = 'visible' + (isError ? ' error' : '');
+      console.log('[VoidCode Runner]', msg);
     }
     function hideStatus() {
-      status.className = '';
+      statusEl.className = '';
     }
 
     // ── Plain HTML render ────────────────────────────────────────────────────
@@ -56,25 +58,29 @@
         showStatus('📥 Installing dependencies…');
         const install = await wc.spawn('npm', ['install']);
         install.output.pipeTo(new WritableStream({
-          write(chunk) { showStatus('📥 ' + chunk.trim().slice(0, 80)); }
+          write(chunk) { showStatus('📥 ' + chunk.trim().slice(0, 100)); }
         }));
         const installCode = await install.exit;
-        if (installCode !== 0) { showStatus('npm install failed', true); return; }
+        if (installCode !== 0) {
+          showStatus('❌ npm install failed (exit ' + installCode + ')', true);
+          return;
+        }
 
         showStatus('🚀 Starting dev server…');
         const dev = await wc.spawn('npm', ['run', 'dev']);
         dev.output.pipeTo(new WritableStream({
-          write(chunk) { showStatus('🚀 ' + chunk.trim().slice(0, 80)); }
+          write(chunk) { showStatus('🚀 ' + chunk.trim().slice(0, 100)); }
         }));
 
         wc.on('server-ready', (port, url) => {
           showStatus('✅ Running on ' + url);
-          setTimeout(hideStatus, 2000);
+          setTimeout(hideStatus, 3000);
           iframe.removeAttribute('sandbox');
           iframe.src = url;
         });
       } catch (err) {
-        showStatus('WebContainer error: ' + err.message, true);
+        showStatus('❌ WebContainer error: ' + err.message, true);
+        console.error('[VoidCode Runner] WebContainer error:', err);
       }
     }
 
@@ -82,11 +88,14 @@
     window.addEventListener('message', (e) => {
       const msg = e.data;
       if (!msg?.type) return;
+      console.log('[VoidCode Runner] received:', msg.type, msg.html ? 'html=' + msg.html.length : '', msg.files ? 'files=' + Object.keys(msg.files).length : '');
       if (msg.type === 'VOIDCODE_RUN') {
         if (msg.html) {
           renderHTML(msg.html);
         } else if (msg.files) {
           runFramework(msg.files);
+        } else {
+          showStatus('❌ VOIDCODE_RUN received but no html or files', true);
         }
       }
     });
@@ -101,6 +110,8 @@
     signalReady();
     setTimeout(signalReady, 500);
     setTimeout(signalReady, 1500);
+
+    console.log('[VoidCode Runner] Ready. opener:', !!window.opener);
   </script>
 </body>
 </html>
