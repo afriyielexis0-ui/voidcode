@@ -31,8 +31,12 @@
   <script>
     const frame = document.getElementById('frame');
     const loading = document.getElementById('loading');
+    const LAST_HTML_KEY = 'voidcode_last_html';
 
-    function render(html) {
+    function render(html, skipCache) {
+      if (!skipCache) {
+        try { localStorage.setItem(LAST_HTML_KEY, html); } catch (e) {}
+      }
       frame.style.display = 'block';
       loading.style.display = 'none';
       const doc = frame.contentDocument || frame.contentWindow.document;
@@ -53,6 +57,13 @@
         render(e.data.html);
       }
     });
+
+    // Plain browser reload (no opener message will ever come again) —
+    // restore the last successfully rendered HTML from this tab's history.
+    try {
+      const cached = localStorage.getItem(LAST_HTML_KEY);
+      if (cached) render(cached, true);
+    } catch (e) {}
   </script>
 </body>
 </html>
